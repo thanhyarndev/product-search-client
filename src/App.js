@@ -7,7 +7,6 @@ function App() {
   const [inputValue, setInputValue] = useState('');
   const [products, setProducts] = useState([]);
 
-  // Load từ localStorage lúc khởi tạo
   useEffect(() => {
     const savedProducts = localStorage.getItem('products');
     if (savedProducts) {
@@ -22,32 +21,61 @@ function App() {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-
     if (!inputValue.trim()) return;
 
     const code = extractCode(inputValue.trim());
 
     try {
+      console.log("🔍 Fetching product from API with code:", code);
       const response = await axios.get(`http://localhost:8386/api/fetch-product?code=${code}`);
       const { data } = response.data;
 
-      const productInfo = {
-        qrcode: inputValue.trim(),
-        product_name: data.product_name,
-        lot: data.lot,
-        expired_date: data.expired_date,
-        unit_name: data.unit_name || (data.retail_unit_detail ? data.retail_unit_detail.unit : "N/A"),
-        uniq: code,
+      const newProduct = {
+        QRCode: inputValue.trim(),
+        Product_Name: data.product_name || 'Unknown',
+        Lot: data.lot || 'N/A',
+        Expired_Date: data.expired_date || 'N/A',
+        Unit: data.unit_name || (data.retail_unit_detail ? data.retail_unit_detail.unit : "N/A"),
+        Uniq: code,
+        Status: 'Printing...'
       };
 
-      const updatedProducts = [...products, productInfo];
-
-      setProducts(updatedProducts);                     // Cập nhật State
-      localStorage.setItem('products', JSON.stringify(updatedProducts));  // Cập nhật luôn LocalStorage
-
+      const updatedProducts = [...products, newProduct];
+      setProducts(updatedProducts);
       setInputValue('');
+
+      console.log('📦 Sending to printer:', newProduct);
+
+      try {
+        const printRes = await axios.post('http://localhost:9999/print/', {
+          QRCode: newProduct.QRCode,
+          Product_Name: newProduct.Product_Name,
+          Lot: newProduct.Lot,
+          Expired_Date: newProduct.Expired_Date,
+          Unit: newProduct.Unit,
+          Uniq: newProduct.Uniq
+        }, {
+          headers: { 'Content-Type': 'application/json' }
+        });
+
+        console.log('✅ Print response:', printRes.status, printRes.data);
+
+        if (printRes.status === 200 && printRes.data.status === 'printed') {
+          updatedProducts[updatedProducts.length - 1].Status = 'Done';
+        } else {
+          updatedProducts[updatedProducts.length - 1].Status = `Failed: ${printRes.data.status || 'Unknown'}`;
+        }
+      } catch (printErr) {
+        console.error('❌ Print error:', printErr);
+        const errorMessage = printErr.response?.data?.error || printErr.message || 'Unknown error';
+        updatedProducts[updatedProducts.length - 1].Status = `Failed: ${errorMessage}`;
+      }
+
+      setProducts([...updatedProducts]);
+      localStorage.setItem('products', JSON.stringify(updatedProducts));
+
     } catch (error) {
-      console.error('Error fetching product:', error);
+      console.error('❌ Fetch error:', error);
     }
   };
 
@@ -59,37 +87,37 @@ function App() {
   const handleExport = () => {
     if (products.length === 0) return;
 
-    const worksheet = XLSX.utils.json_to_sheet(products.map((product) => ({
-      QRCode: product.qrcode,
-      Product_Name: product.product_name,
-      Lot: product.lot,
-      Expired_Date: product.expired_date,
-      Unit: product.unit_name,
-      Uniq: product.uniq,
+    const worksheet = XLSX.utils.json_to_sheet(products.map((p) => ({
+      QRCode: p.QRCode,
+      Product_Name: p.Product_Name,
+      Lot: p.Lot,
+      Expired_Date: p.Expired_Date,
+      Unit: p.Unit,
+      Uniq: p.Uniq,
+      Status: p.Status
     })));
 
     const workbook = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(workbook, worksheet, "Products");
-
+    XLSX.utils.book_append_sheet(workbook, worksheet, 'Products');
     const excelBuffer = XLSX.write(workbook, { bookType: 'xlsx', type: 'array' });
     const file = new Blob([excelBuffer], { type: 'application/octet-stream' });
 
-    saveAs(file, `products_${new Date().toISOString().slice(0,10)}.xlsx`);
+    saveAs(file, `products_${new Date().toISOString().slice(0, 10)}.xlsx`);
   };
 
   return (
     <div style={styles.container}>
-      <h1 style={styles.title}>🔎 URL Product Search</h1>
+      <h1 style={styles.title}>🔎 URL Product Search + <b>Print</b></h1>
 
       <form onSubmit={handleSubmit} style={styles.form}>
-        <input 
+        <input
           type="text"
           value={inputValue}
           onChange={(e) => setInputValue(e.target.value)}
-          placeholder="Scan or enter product URL here..."
+          placeholder="Scan or enter product URL"
           style={styles.input}
         />
-        <button type="submit" style={styles.button}>Search</button>
+        <button type="submit" style={styles.button}>Search & Print</button>
       </form>
 
       <div style={styles.buttonGroup}>
@@ -108,18 +136,20 @@ function App() {
               <th style={styles.th}>Expired Date</th>
               <th style={styles.th}>Unit</th>
               <th style={styles.th}>Uniq</th>
+              <th style={styles.th}>Status</th>
             </tr>
           </thead>
           <tbody>
             {products.map((product, index) => (
               <tr key={index}>
                 <td style={styles.td}>{index + 1}</td>
-                <td style={styles.td}>{product.qrcode}</td>
-                <td style={styles.td}>{product.product_name}</td>
-                <td style={styles.td}>{product.lot}</td>
-                <td style={styles.td}>{product.expired_date}</td>
-                <td style={styles.td}>{product.unit_name}</td>
-                <td style={styles.td}>{product.uniq}</td>
+                <td style={styles.td}>{product.QRCode}</td>
+                <td style={styles.td}>{product.Product_Name}</td>
+                <td style={styles.td}>{product.Lot}</td>
+                <td style={styles.td}>{product.Expired_Date}</td>
+                <td style={styles.td}>{product.Unit}</td>
+                <td style={styles.td}>{product.Uniq}</td>
+                <td style={styles.td}>{product.Status}</td>
               </tr>
             ))}
           </tbody>
@@ -193,7 +223,7 @@ const styles = {
   },
   table: {
     width: '100%',
-    maxWidth: '1000px',
+    maxWidth: '1100px',
     backgroundColor: '#fff',
     borderCollapse: 'collapse',
     borderRadius: '10px',
